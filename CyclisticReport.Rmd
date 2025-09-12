@@ -1,0 +1,245 @@
+---
+title: "Cyclistic Casual vs Member Report"
+author: "Aidhen"
+date: "2025-08-27"
+output: html_document
+---
+
+## Ask
+
+I am a junior data analyst at Cyclistic, a bike-share company in Chicago.  
+The director of marketing wants to convert casual riders into annual members, because annual members provide more consistent and long-term revenue.  
+
+The business task is to determine how casual riders and annual members use Cyclistic bikes differently. The goal is to identify insights that can support strategies to increase the conversion rate from casual riders to annual members.
+
+## Prepare
+
+### Data Description
+The data contains these collumn:
+
+ride_id (categorical):
+rideable_type (categorical):
+started_at (datetime)
+ended_at (datetime)
+start_station_name (categorical)
+start_station_id (categorical)
+end_station_name (categorical)
+end_station_id (categorical)
+start_lat (numeric)
+start_lng (numeric)
+end_lat (numeric)
+end_lng (numeric)
+member_casual (categorical)
+
+### Data Source
+The datasets for Q1 2019 and Q1 2020 were taken from the Divvy bike-share system, provided by Motivate International Inc. 
+Both datasets are in CSV format. The data is open and available under the [Divvy Data License](https://divvybikes.com/data-license-agreement).
+
+### Setting Up Environment
+To begin the analysis, I will set up the R environment and load the necessary packages.  
+- **tidyverse** for data manipulation and visualization.  
+- **lubridate** for handling and formatting date-time values.  
+- **janitor** for quick and convenient data cleaning functions such as `clean_names()`.  
+
+#### Packages
+```{r setup, message=FALSE, warning=FALSE}
+#install.packages("tidyverse")
+#install.packages("janitor")
+#install.packages("scales")
+#install.packages("knitr")
+library(knitr)
+library(tidyverse)
+library(lubridate)
+library(janitor)
+library(scales)
+```
+
+#### Loading Data
+```{r loading data, message = FALSE, warning = FALSE}
+q1_2019 <- read_csv("Cyclistic_Q1_2019.csv")
+q1_2020 <- read_csv("Cyclistic_Q1_2020.csv")
+```
+
+### Data Processing
+To make the data consistent across years, the 2019 and 2020 datasets were standardized to the same column names.  
+In the 2019 dataset, the column `usertype` contained two values: "Subscriber" and "Customer".  
+In the 2020 dataset, the equivalent column `member_casual` contained "member" and "casual".  
+These were standardized so that both datasets used "member" and "casual".
+
+```{r manipulating 2019 into 2020, message = FALSE, warning = FALSE}
+q1_2019 <- q1_2019 %>%
+mutate(usertype = case_when(usertype == "Subscriber" ~ "member", usertype == "Customer" ~ "casual")) %>% 
+rename(member_casual = usertype)
+
+q1_2019 <- q1_2019 %>%
+  mutate(trip_id = as.character(trip_id)) %>%
+  rename(ride_id = trip_id)
+```
+
+To prepare the datasets for merging, irrelevant columns that were not shared between the 2019 and 2020 files were removed. This ensured that both dataframes had the same structure and only included consistent variables needed for analysis. Standardized column names and data types so the 2019 and 2020 datasets matched.
+
+```{r dropping_collumn, message = FALSE, warning = FALSE}
+q1_2019 <- q1_2019 %>% 
+  select(-gender,-birthyear,-bikeid,-tripduration) %>% 
+  rename(started_at = start_time,
+    ended_at = end_time,
+    start_station_id = from_station_id,
+    start_station_name = from_station_name,
+    end_station_id = to_station_id,
+    end_station_name = to_station_name)
+
+q1_2020 <- q1_2020 %>% 
+  select(-rideable_type, -start_lat, -start_lng, -end_lng, -end_lat)
+```
+
+After cleaning, I merge and standarizing the Q1 2019 and Q1 2020 datasets into a single dataframe to prepare for analysis, and check if the datasets merged successfully using started_at as validator.
+
+```{r merging dataset, message= FALSE, warning= FALSE}
+ride <- bind_rows(q1_2019, q1_2020)
+
+ride <- ride %>% 
+  mutate(started_at = ymd_hms(started_at),
+    ended_at = ymd_hms(ended_at))
+```
+
+### Data Cleaning
+
+In this phase, I cleaned and validated the datasets to ensure they were consistent and reliable for analysis.
+
+- Created `usage_length` (minutes) and filtered out trips shorter than 1 minute or longer than 24 hours.
+- Checked for duplicate ride IDs and missing values in key fields.
+
+```{r process, message=FALSE, warning=FALSE}
+
+ride <- ride %>%
+  mutate(usage_length = round(as.numeric(difftime(ended_at, started_at, units = "mins")), 1)) %>%
+  filter(usage_length >= 1, usage_length <= 24 * 60)
+
+dup_count <- sum(duplicated(ride$ride_id))
+
+na_check <- sapply(ride[, c("ride_id","started_at","ended_at","member_casual")],
+                   function(x) sum(is.na(x)))
+
+kable(data.frame(duplicated_ride_id = dup_count),
+             caption = "Number of Duplicate Ride ID")
+
+kable(as.data.frame(t(na_check)),
+             caption = "Missing Values in Key Columns")
+```
+
+## Data Analyze
+
+For this step I created new columns so the data is easier to analyze. I added day_week to show the weekday name, day_type to group weekdays and weekends, and start_hours to capture the starting hour. This makes it possible to compare usage by day and hour later on.
+
+```{r creating new collumn, message=FALSE, warning=FALSE}
+ride <- ride %>%
+  mutate(
+    day_week = wday(started_at, label = TRUE, week_start =1))
+
+ride <- ride %>%
+  mutate(day_type = case_when(
+    day_week %in% c("Mon","Tue","Wed","Thu","Fri") ~ "Weekday",
+    day_week %in% c("Sat","Sun") ~ "Weekend"))
+
+ride <- ride %>% 
+  mutate(start_hours = hour(started_at))
+```
+
+### Weekdays vs Weekend Overview
+
+Here I grouped the data by rider type and day type. I calculated the number of trips, the average and median duration, and the percentage share. The result shows that casual riders ride longer, and their usage is more balanced between weekdays and weekends. Members ride much more on weekdays, and their trips are shorter. This suggests casual riders are using bikes for leisure, while members use them for commuting.
+
+```{r overview, message=FALSE, warning=FALSE}
+ride %>%
+  group_by(member_casual,day_type) %>%
+  summarise(
+    total_trips = n(),
+    avg_duration = mean(usage_length, na.rm = TRUE),
+    median_duration = median(usage_length, na.rm = TRUE)
+  ) %>% 
+  mutate (percentage_user = total_trips / sum(total_trips) * 100) %>% 
+ kable(col.names = c("User Type", "Day Type", "Total Trips", "Average Duration", "Median Duration", "% of Trips per Member"), caption = "Weekday vs Weekend", digits = 1)
+```
+
+### Peak Hours
+
+This part focuses only on casual riders. I grouped them by hour and listed the top three hours. The peak hours for casual riders are in the afternoon, around 14:00–16:00. That fits a leisure pattern instead of a commuting one.
+
+```{r overview2, message=FALSE, warning=FALSE}
+ride %>%
+  filter(member_casual == "casual") %>% 
+  group_by(member_casual, start_hours) %>%
+  summarise(total_trips = n()) %>%
+  arrange(member_casual, desc(total_trips)) %>% 
+  head(3) %>% 
+  kable(col.names = c("User Type", "Start Hour", "Total Trips"),
+    caption = "Top 3 Peak Hours — Casual")
+```
+
+Finally I did the same process for members. Their peak hours are in the morning at 08:00 and in the evening around 16:00–17:00. This is a typical commuter pattern, with members using bikes to go to work in the morning and return home in the evening.
+
+```{r overview3, message=FALSE, warning=FALSE}
+ride %>%
+  filter(member_casual == "member") %>% 
+  group_by(member_casual, start_hours) %>%
+  summarise(total_trips = n()) %>% 
+  arrange(member_casual, desc(total_trips)) %>% 
+  head(3) %>% 
+  kable(col.names = c("User Type", "Start Hour", "Total Trips"),
+    caption = "Top 3 Peak Hours — Member")
+```
+
+### Monthly and Yearly Comparison
+
+```{r monthly & yearly, message=FALSE, warning=FALSE}
+ride %>%
+  mutate(
+    year  = year(started_at),
+    month = month(started_at, label = TRUE, abbr = TRUE)) %>%
+  group_by(member_casual, year, month) %>%
+  summarise(total_trips = n()) %>%
+  ggplot(aes(x = month, y = total_trips, fill = factor(year))) +
+  geom_col(position = "dodge") +
+  facet_wrap(~member_casual) +
+  labs(
+    title = "Monthly Trips (Jan–Mar 2019 vs 2020)",
+    x = "Month",
+    y = "Total Trips",
+    fill = "Year"
+  ) +
+  theme(panel.spacing = unit(2, "lines"))
+```
+
+This table compares January–March across 2019 and 2020 for both rider types. Members consistently record more trips each month with shorter durations, while casual riders take fewer but longer trips. The month-to-month results confirm the same usage patterns found earlier in the weekday/weekend and peak hour analysis.
+
+## Share
+
+### Overall Insight.
+
+From January to March in 2019 and 2020, members took many more trips than casual riders. In March, member trips dropped compared to January and February.
+
+Casual riders made fewer trips overall, but their numbers grew a little each month. This shows that members are mostly commuting, so their rides change more with conditions. Casual riders use bikes more for leisure, so their rides are steadier even if the total is smaller.
+
+## Act
+
+- Focus on casual rides in afternoon & weekends  
+  Casual rides peak during leisure time. cyclistic can try weekend pass or a short trial membership right after a casual trip.
+
+- Support members during commute  
+  Members peak around 8am and 4–5pm. give small rewards or points to keep them active on weekdays.
+
+- Show simple cost compare  
+  If a casual rider takes several trips, show a pop-up like “you would save money as a member.” it’s based on their own rides, easy to understand.
+
+   
+## Limitations  
+
+- Data only covers january to march, so results may not show full year patterns
+
+- Only rider type and time were analyzed, location and bike type were not included
+
+- Results may change if external conditions are different in other time periods
+
+## Conclusion  
+
+Members use bikes mainly for commuting, while casual riders use them more for leisure. this difference gives cyclistic a clear chance to turn casual riders into members with the right offers. 
