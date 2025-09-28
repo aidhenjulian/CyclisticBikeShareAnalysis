@@ -56,6 +56,7 @@ library(scales)
 
 #### Loading Data
 ```{r loading data, message = FALSE, warning = FALSE}
+setwd("~/Portfolio/cyclistic")
 q1_2019 <- read_csv("Cyclistic_Q1_2019.csv")
 q1_2020 <- read_csv("Cyclistic_Q1_2020.csv")
 ```
@@ -131,7 +132,7 @@ kable(as.data.frame(t(na_check)),
 
 For this step I created new columns so the data is easier to analyze. I added day_week to show the weekday name, day_type to group weekdays and weekends, and start_hours to capture the starting hour. This makes it possible to compare usage by day and hour later on.
 
-```{r creating new collumn, message=FALSE, warning=FALSE}
+```{r , message=FALSE, warning=FALSE}
 ride <- ride %>%
   mutate(
     day_week = wday(started_at, label = TRUE, week_start =1))
@@ -147,19 +148,31 @@ ride <- ride %>%
 
 ### Weekdays vs Weekend Overview
 
-Here I grouped the data by rider type and day type. I calculated the number of trips, the average and median duration, and the percentage share. The result shows that casual riders ride longer, and their usage is more balanced between weekdays and weekends. Members ride much more on weekdays, and their trips are shorter. This suggests casual riders are using bikes for leisure, while members use them for commuting.
+We compare **member vs casual** proportions on **Weekday** vs **Weekend** using a 100% stacked bar to highlight mix over counts.
 
-```{r overview, message=FALSE, warning=FALSE}
-ride %>%
-  group_by(member_casual,day_type) %>%
-  summarise(
-    total_trips = n(),
-    avg_duration = mean(usage_length, na.rm = TRUE),
-    median_duration = median(usage_length, na.rm = TRUE)
-  ) %>% 
-  mutate (percentage_user = total_trips / sum(total_trips) * 100) %>% 
- kable(col.names = c("User Type", "Day Type", "Total Trips", "Average Duration", "Median Duration", "% of Trips per Member"), caption = "Weekday vs Weekend", digits = 1)
+```{r creating new collumn, message=FALSE, warning=FALSE}
+df_daytype <- ride %>%
+  count(day_type, member_casual) %>%
+  group_by(day_type) %>%
+  mutate(pct = n / sum(n)) %>%
+  ungroup()
+
+
+df_daytype$day_type <- factor(df_daytype$day_type, levels = c("Weekday","Weekend"))
+
+ggplot(df_daytype, aes(x = day_type, y = pct, fill = member_casual)) +
+  geom_col(position = "fill") +
+  geom_text(aes(label = scales::percent(pct, accuracy = 1)),
+            position = position_fill(vjust = 0.5),
+            color = "white", size = 4) +        
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Trips by Day Type (100%)", x = NULL, y = "Proportion") +
+  theme_minimal()
 ```
+
+
+**Takeaway.** Members dominate **weekdays** (commute behavior), while **casual riders** dominate **weekends** (leisure) — a clear split that supports targeted conversion offers.
+
 
 ### Peak Hours
 
@@ -188,6 +201,41 @@ ride %>%
   kable(col.names = c("User Type", "Start Hour", "Total Trips"),
     caption = "Top 3 Peak Hours — Member")
 ```
+```{r overview4, message=FALSE, warning=FALSE}
+df_hour <- ride %>%
+  count(start_hours, member_casual) %>%
+  arrange(start_hours)
+
+ggplot(df_hour, aes(x = start_hours, y = n, linetype = member_casual)) +
+  geom_line() +
+  labs(title = "Trips by Hour (0–23)", x = "Start Hours", y = "Trips Count",
+  linetype="Rider Type") +
+  theme_minimal()
+```
+
+Takeaway. Annual Members peak during commute hours (around 7–9 and 17–18), while Casual Riders ride more steadily, with a slight increase in the afternoon and weekends.
+This pattern confirms members = commute use vs casual = leisure use.
+
+### Duration vs Rider Type
+I wrote this to see the median trip duration (minutes) for member vs casual.
+I’m using median so outliers (super short or super long rides) don’t mess up the comparison.
+```{r durationvsrider, message=FALSE, warning=FALSE}
+df_med <- ride %>%
+  group_by(member_casual) %>%
+  summarise(median_min = median(usage_length, na.rm = TRUE))
+
+df_med$member_casual <- factor(df_med$member_casual, levels = c("member", "casual"))
+
+ggplot(df_med, aes(x = member_casual, y = median_min, fill = member_casual)) +
+  geom_col() +
+  scale_fill_manual(values = c("member" = "#3FBBC0",
+                               "casual" = "#EF6F61")) +
+  labs(title = "Median Trip Duration", x = NULL, y = "Minutes", fill = "Rider Type") +
+  theme_minimal()
+```
+
+This fits the pattern I’m seeing overall: casual = more leisure time, members = commute.
+
 
 ### Monthly and Yearly Comparison
 
@@ -211,6 +259,8 @@ ride %>%
 ```
 
 This table compares January–March across 2019 and 2020 for both rider types. Members consistently record more trips each month with shorter durations, while casual riders take fewer but longer trips. The month-to-month results confirm the same usage patterns found earlier in the weekday/weekend and peak hour analysis.
+
+
 
 ## Share
 
